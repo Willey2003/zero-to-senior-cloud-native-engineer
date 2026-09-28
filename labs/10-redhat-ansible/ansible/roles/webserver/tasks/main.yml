@@ -1,0 +1,43 @@
+- name: Install httpd and SELinux tools
+  ansible.builtin.dnf:
+    name: [httpd, policycoreutils-python-utils]
+    state: present
+
+- name: Listen on custom port
+  ansible.builtin.lineinfile:
+    path: /etc/httpd/conf/httpd.conf
+    regexp: '^Listen '
+    line: "Listen {{ web_port }}"
+  notify: restart httpd
+
+- name: Allow httpd on custom port in SELinux
+  community.general.seport:
+    ports: "{{ web_port }}"
+    proto: tcp
+    setype: http_port_t
+    state: present
+
+- name: Open firewall
+  ansible.posix.firewalld:
+    port: "{{ web_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Deploy index page
+  ansible.builtin.template:
+    src: index.html.j2
+    dest: /var/www/html/index.html
+    mode: "0644"
+
+- name: Start and enable httpd
+  ansible.builtin.service:
+    name: httpd
+    state: started
+    enabled: true
+
+- name: Health check
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ web_port }}/"
+  delegate_to: localhost
+  become: false

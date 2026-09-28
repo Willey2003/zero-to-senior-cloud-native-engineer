@@ -1,0 +1,21 @@
+# Collector config (use as a ConfigMap, or with the OTel Operator's OpenTelemetryCollector CR)
+receivers:
+  otlp:
+    protocols:
+      grpc: {endpoint: 0.0.0.0:4317}
+      http: {endpoint: 0.0.0.0:4318}
+processors:
+  memory_limiter: {check_interval: 1s, limit_percentage: 80, spike_limit_percentage: 20}
+  batch: {}
+  attributes:
+    actions:
+      - {key: deployment.environment, value: lab, action: upsert}
+      - {key: http.request.header.authorization, action: delete}   # never ship credentials
+exporters:
+  debug: {verbosity: basic}
+  prometheus: {endpoint: 0.0.0.0:8889}
+  otlp/tempo: {endpoint: tempo.monitoring:4317, tls: {insecure: true}}
+service:
+  pipelines:
+    traces:  {receivers: [otlp], processors: [memory_limiter, attributes, batch], exporters: [otlp/tempo, debug]}
+    metrics: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [prometheus]}

@@ -1,0 +1,13 @@
+# helm upgrade --install falco falcosecurity/falco -n falco --create-namespace -f falco-custom-rules.yaml
+customRules:
+  lab-rules.yaml: |-
+    - rule: Shell spawned in shop namespace
+      desc: Detect an interactive shell inside any container in the shop namespace
+      condition: >
+        spawned_process and container and k8s.ns.name = "shop"
+        and proc.name in (bash, sh, zsh) and proc.tty != 0
+      output: >
+        Shell in shop pod (user=%user.name pod=%k8s.pod.name container=%container.name
+        cmd=%proc.cmdline image=%container.image.repository)
+      priority: WARNING
+      tags: [lab, shell, mitre_execution]

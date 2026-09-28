@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: {name: api-slo, namespace: shop, labels: {release: mon}}
+spec:
+  groups:
+    - name: api.rules
+      rules:
+        - record: job:http_errors:ratio_rate5m
+          expr: |
+            sum(rate(http_requests_total{job="api",status=~"5.."}[5m]))
+            / sum(rate(http_requests_total{job="api"}[5m]))
+        - alert: ApiHighErrorBudgetBurn
+          expr: job:http_errors:ratio_rate5m > (14.4 * 0.001)   # fast burn of a 99.9% SLO
+          for: 2m
+          labels: {severity: page}
+          annotations:
+            summary: "API is burning its error budget fast"
+            runbook_url: "https://github.com/Willey2003/zero-to-senior-cloud-native-engineer/blob/main/scenarios/README.md"
+        - alert: PodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="shop"}[15m]) > 3
+          labels: {severity: ticket}
+          annotations: {summary: "{{ $labels.pod }} is restarting often"}

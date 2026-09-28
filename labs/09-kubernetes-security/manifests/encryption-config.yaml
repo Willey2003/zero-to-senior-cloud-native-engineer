@@ -1,0 +1,14 @@
+# /etc/kubernetes/enc/encryption-config.yaml + API server flag:
+#   --encryption-provider-config=/etc/kubernetes/enc/encryption-config.yaml  (mount the folder into the static pod!)
+# Key: head -c 32 /dev/urandom | base64
+# Re-encrypt existing secrets: kubectl get secrets -A -o json | kubectl replace -f -
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources: ["secrets"]
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              secret: REPLACE_WITH_BASE64_32_BYTE_KEY
+      - identity: {}

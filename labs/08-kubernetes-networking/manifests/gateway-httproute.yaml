@@ -1,0 +1,23 @@
+# Requires Gateway API CRDs and a controller (e.g. Envoy Gateway, Istio, Cilium, NGINX Gateway Fabric).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: shop-gw, namespace: shop}
+spec:
+  gatewayClassName: eg          # name of your installed GatewayClass
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: api-canary, namespace: shop}
+spec:
+  parentRefs: [{name: shop-gw}]
+  hostnames: ["shop.local"]
+  rules:
+    - matches: [{headers: [{name: x-canary, value: "true"}]}]
+      backendRefs: [{name: api-v2, port: 80}]
+    - backendRefs:
+        - {name: api, port: 80, weight: 90}
+        - {name: api-v2, port: 80, weight: 10}

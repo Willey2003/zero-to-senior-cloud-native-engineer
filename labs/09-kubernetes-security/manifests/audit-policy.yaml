@@ -1,0 +1,16 @@
+# /etc/kubernetes/audit-policy.yaml  + API server flags:
+#   --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+#   --audit-log-path=/var/log/kubernetes/audit/audit.log --audit-log-maxage=7
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: ["RequestReceived"]
+rules:
+  - level: None                       # skip noisy read-only health traffic
+    nonResourceURLs: ["/healthz*", "/readyz*", "/livez*"]
+  - level: Metadata                   # never log secret contents
+    resources: [{group: "", resources: ["secrets", "configmaps"]}]
+  - level: RequestResponse            # full detail for deletions and exec
+    verbs: ["delete", "deletecollection"]
+  - level: Request
+    resources: [{group: "", resources: ["pods/exec", "pods/attach"]}]
+  - level: Metadata

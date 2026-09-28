@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyOutsideAllowedRegions",
+      "Effect": "Deny",
+      "NotAction": ["iam:*", "organizations:*", "sts:*", "support:*", "cloudfront:*", "route53:*", "budgets:*"],
+      "Resource": "*",
+      "Condition": {"StringNotEquals": {"aws:RequestedRegion": ["ap-south-1", "us-east-1"]}}
+    },
+    {
+      "Sid": "ProtectSecurityServices",
+      "Effect": "Deny",
+      "Action": ["cloudtrail:StopLogging", "cloudtrail:DeleteTrail", "guardduty:DeleteDetector", "config:StopConfigurationRecorder"],
+      "Resource": "*"
+    }
+  ]
+}

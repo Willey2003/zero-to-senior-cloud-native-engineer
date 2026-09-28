@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shop-api
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Willey2003/zero-to-senior-cloud-native-engineer.git
+    targetRevision: main
+    path: labs/07-kubernetes-core/manifests
+    directory: {include: "lab-api.yaml"}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shop
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true]

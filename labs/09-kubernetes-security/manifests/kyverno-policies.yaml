@@ -1,0 +1,47 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: disallow-latest-tag}
+spec:
+  validationFailureAction: Enforce
+  rules:
+    - name: require-pinned-tag
+      match: {any: [{resources: {kinds: [Pod]}}]}
+      validate:
+        message: "Images must use a pinned tag or digest, not ':latest'."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest & *:*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: require-run-as-non-root}
+spec:
+  validationFailureAction: Enforce
+  rules:
+    - name: non-root
+      match: {any: [{resources: {kinds: [Pod]}}]}
+      validate:
+        message: "Pods must set securityContext.runAsNonRoot=true."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: default-deny-for-new-namespaces}
+spec:
+  rules:
+    - name: generate-default-deny
+      match: {any: [{resources: {kinds: [Namespace]}}]}
+      generate:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: default-deny
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress, Egress]

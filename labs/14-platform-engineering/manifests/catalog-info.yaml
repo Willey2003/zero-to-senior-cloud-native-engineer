@@ -1,0 +1,26 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: lab-api
+  description: Items REST API used across the labs
+  annotations:
+    github.com/project-slug: Willey2003/zero-to-senior-cloud-native-engineer
+    backstage.io/kubernetes-id: api
+    argocd/app-name: shop-api
+  tags: [python, fastapi]
+spec:
+  type: service
+  lifecycle: production
+  owner: group:platform-team
+  system: shop
+  providesApis: [items-api]
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata: {name: items-api}
+spec:
+  type: openapi
+  lifecycle: production
+  owner: group:platform-team
+  definition:
+    $text: http://api.shop/openapi.json

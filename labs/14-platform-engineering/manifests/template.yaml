@@ -1,0 +1,32 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: python-service
+  title: New Python microservice (golden path)
+spec:
+  owner: group:platform-team
+  type: service
+  parameters:
+    - title: Service details
+      required: [name, owner]
+      properties:
+        name: {type: string, pattern: "^[a-z][a-z0-9-]{2,30}$"}
+        owner: {type: string, ui:field: OwnerPicker}
+  steps:
+    - id: fetch
+      action: fetch:template
+      input:
+        url: ./skeleton          # Dockerfile, app.py, CI workflow, k8s manifests, catalog-info.yaml
+        values: {name: "${{ parameters.name }}", owner: "${{ parameters.owner }}"}
+    - id: publish
+      action: publish:github
+      input:
+        repoUrl: github.com?owner=<you>&repo=${{ parameters.name }}
+    - id: register
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps.publish.output.repoContentsUrl }}
+        catalogInfoPath: /catalog-info.yaml
+  output:
+    links:
+      - {title: Repository, url: "${{ steps.publish.output.remoteUrl }}"}

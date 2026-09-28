@@ -1,0 +1,16 @@
+# Requires KServe installed. Test:
+#   curl -H "Host: iris.ml.example.com" http://<ingress>/v1/models/iris:predict -d '{"instances":[[6.8,2.8,4.8,1.4]]}'
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: iris
+  namespace: ml
+spec:
+  predictor:
+    minReplicas: 0            # scale to zero when idle
+    model:
+      modelFormat: {name: sklearn}
+      storageUri: gs://kfserving-examples/models/sklearn/1.0/model
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {memory: 512Mi}

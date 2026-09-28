@@ -1,0 +1,3 @@
+<h1>{{ web_message }}</h1>
+<p>Host: {{ ansible_facts['hostname'] }} | OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}</p>
+<p>Memory: {{ ansible_facts['memtotal_mb'] }} MB | Managed by Ansible</p>

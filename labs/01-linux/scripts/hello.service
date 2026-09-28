@@ -1,0 +1,16 @@
+# Install:
+#   sudo cp hello.sh /usr/local/bin/ && sudo chmod +x /usr/local/bin/hello.sh
+#   sudo cp hello.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now hello
+#   journalctl -u hello -f
+[Unit]
+Description=My first systemd service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/hello.sh
+Restart=on-failure
+User=nobody
+
+[Install]
+WantedBy=multi-user.target

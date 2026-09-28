@@ -1,0 +1,32 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: fedora-vm
+  namespace: vms
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels: {kubevirt.io/domain: fedora-vm}
+    spec:
+      domain:
+        cpu: {cores: 1}
+        memory: {guest: 2Gi}
+        devices:
+          disks:
+            - {name: rootdisk, disk: {bus: virtio}}
+            - {name: cloudinit, disk: {bus: virtio}}
+          interfaces: [{name: default, masquerade: {}}]
+      networks: [{name: default, pod: {}}]
+      volumes:
+        - name: rootdisk
+          containerDisk: {image: quay.io/containerdisks/fedora:latest}
+        - name: cloudinit
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              user: fedora
+              password: changeme
+              chpasswd: {expire: false}
+              packages: [nginx]
+              runcmd: [systemctl enable --now nginx]
