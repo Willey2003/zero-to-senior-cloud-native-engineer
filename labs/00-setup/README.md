@@ -65,3 +65,14 @@ git push
 - [ ] I can SSH from my laptop into my VM.
 - [ ] I made my first commit and see it on github.com.
 - [ ] I took a **snapshot** of a clean VM so I can roll back after breaking it.
+
+## Prepare a RHEL 9 lab server in one step
+After installing RHEL 9 / Rocky 9 (VirtualBox or vSphere), copy `scripts/rhel9-bootstrap.sh` to the server and run:
+```bash
+chmod +x rhel9-bootstrap.sh
+sudo ./rhel9-bootstrap.sh --hostname server1.lab.local --timezone Asia/Kolkata
+sudo systemctl reboot        # if the script says a reboot is recommended
+```
+It updates the OS, installs the lab packages, enables sshd, chronyd, firewalld, cockpit and other services,
+and opens the firewall for SSH, the web console (9090), HTTP/HTTPS, 8080 and 8000. Add `--k8s-ports` later
+for the Kubernetes labs, or `--dry-run` to preview without changing anything. Read the script before running it.
