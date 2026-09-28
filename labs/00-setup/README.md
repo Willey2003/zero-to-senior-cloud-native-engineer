@@ -76,3 +76,27 @@ sudo systemctl reboot        # if the script says a reboot is recommended
 It updates the OS, installs the lab packages, enables sshd, chronyd, firewalld, cockpit and other services,
 and opens the firewall for SSH, the web console (9090), HTTP/HTTPS, 8080 and 8000. Add `--k8s-ports` later
 for the Kubernetes labs, or `--dry-run` to preview without changing anything. Read the script before running it.
+
+### No Red Hat subscription yet? Use the RHEL DVD as a local repo (also an RHCSA exam skill)
+Attach the RHEL 9 DVD ISO to the VM's CD drive (vSphere: Edit Settings → CD/DVD → Datastore ISO, tick Connected), then:
+```bash
+sudo mkdir -p /mnt/rhel9
+echo "/dev/sr0 /mnt/rhel9 iso9660 ro,defaults 0 0" | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo mount -a
+sudo tee /etc/yum.repos.d/rhel9-dvd.repo <<'REPO'
+[BaseOS]
+name=RHEL 9 DVD BaseOS
+baseurl=file:///mnt/rhel9/BaseOS
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+
+[AppStream]
+name=RHEL 9 DVD AppStream
+baseurl=file:///mnt/rhel9/AppStream
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+REPO
+sudo dnf clean all && sudo dnf repolist
+```

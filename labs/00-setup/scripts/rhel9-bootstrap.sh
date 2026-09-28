@@ -90,13 +90,20 @@ if [[ "$major" != "9" ]] || [[ "$ID" != "rhel" && " ${ID_LIKE:-} " != *" rhel "*
 fi
 log "Starting bootstrap on ${PRETTY_NAME} ($(hostname))"
 
+REGISTERED=1
 if [[ "$ID" == "rhel" ]] && ! subscription-manager status &>/dev/null; then
-  die "RHEL is not registered. Run: subscription-manager register --username <your-redhat-login>"
+  REGISTERED=0
+  if [[ -z "$(dnf repolist --enabled -q 2>/dev/null)" ]]; then
+    die "RHEL is not registered and no repos are enabled. Register (subscription-manager register) or set up the local ISO repo (see labs/00-setup/README.md)."
+  fi
+  warn "RHEL is not registered; using the enabled local repos only (CRB, EPEL and some packages will be skipped)"
 fi
 
 # ---------- 2. extra repositories ----------
 log "Enabling CodeReady Builder / CRB repository"
-if [[ "$ID" == "rhel" ]]; then
+if [[ "$ID" == "rhel" && "$REGISTERED" == "0" ]]; then
+  warn "Skipping CRB (needs a registered system)"
+elif [[ "$ID" == "rhel" ]]; then
   run subscription-manager repos --enable "codeready-builder-for-rhel-9-$(uname -m)-rpms" || warn "Could not enable CRB"
 else
   run dnf -y install dnf-plugins-core
