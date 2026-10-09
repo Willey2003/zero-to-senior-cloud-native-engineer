@@ -70,7 +70,7 @@ The fastest jumps come from **switching jobs every 2-3 years with a stronger por
 
 ### Phase 0: Setup (2 weeks) → `labs/00-setup`
 - Install a hypervisor (VirtualBox or VMware), or use WSL2 on Windows, and create two Linux VMs.
-- Create a GitHub account (you have one: `Willey2003`) and learn: clone, add, commit, push.
+- Create a GitHub account and learn: clone, add, commit, push.
 - Install VS Code with the Remote-SSH, YAML and Python extensions.
 - Habit: 25-minute focus blocks, a weekly journal, one small commit per day.
 
