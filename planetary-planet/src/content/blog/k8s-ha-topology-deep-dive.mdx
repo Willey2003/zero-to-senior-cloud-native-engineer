@@ -1,0 +1,372 @@
+---
+title: "Building Production-Grade High Availability Kubernetes Cluster Topologies"
+description: "A deep dive into structural control-plane redundancy, stacked vs. external etcd topologies, and automated load balancer orchestration."
+pubDate: "2026-10-01"
+heroImage: "../../assets/blog-placeholder-3.jpg"
+tags: ["kubernetes", "ha-clusters", "devops", "platform-engineering"]
+---
+
+{/* Self-contained HA topology generator: no component import. The script below is plain JS rendered inline. */}
+export const haTopologyScript = String.raw`(function () {
+  var root = document.getElementById('k8s-blueprint');
+  if (!root || root.getAttribute('data-ready')) return;
+  root.setAttribute('data-ready', '1');
+
+  var C = {
+    bg: '#0b1626', panel: '#10213a', line: '#2b4a73', grid: '#16304f',
+    text: '#e6eef8', dim: '#8fa6c4', cp: '#38bdf8', etcd: '#f59e0b',
+    worker: '#34d399', lb: '#a78bfa', bad: '#f87171', warn: '#fbbf24', ok: '#34d399'
+  };
+
+  var css = [
+    '#k8s-blueprint{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:' + C.bg + ';color:' + C.text + ';border:1px solid ' + C.line + ';border-radius:12px;padding:20px;margin:2rem 0;line-height:1.45}',
+    '#k8s-blueprint *{box-sizing:border-box}',
+    '#k8s-blueprint h3{margin:0 0 4px;font-size:1.15rem;color:' + C.text + '}',
+    '#k8s-blueprint .kb-sub{margin:0 0 16px;color:' + C.dim + ';font-size:.9rem}',
+    '#k8s-blueprint .kb-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}',
+    '#k8s-blueprint label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;color:' + C.dim + ';text-transform:uppercase;letter-spacing:.04em}',
+    '#k8s-blueprint select,#k8s-blueprint input{background:' + C.panel + ';color:' + C.text + ';border:1px solid ' + C.line + ';border-radius:8px;padding:8px 10px;font-size:.95rem;text-transform:none;letter-spacing:0;width:100%}',
+    '#k8s-blueprint input[type=range]{padding:0;accent-color:' + C.worker + '}',
+    '#k8s-blueprint .kb-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:16px 0}',
+    '#k8s-blueprint .kb-stat{background:' + C.panel + ';border:1px solid ' + C.line + ';border-radius:8px;padding:10px 12px}',
+    '#k8s-blueprint .kb-stat b{display:block;font-size:1.35rem}',
+    '#k8s-blueprint .kb-stat span{font-size:.75rem;color:' + C.dim + ';text-transform:uppercase;letter-spacing:.04em}',
+    '#k8s-blueprint .kb-svg{width:100%;overflow-x:auto;background:' + C.panel + ';border:1px solid ' + C.line + ';border-radius:8px}',
+    '#k8s-blueprint .kb-svg svg{display:block;min-width:620px;width:100%;height:auto}',
+    '#k8s-blueprint .kb-notes{list-style:none;padding:0;margin:12px 0;font-size:.9rem}',
+    '#k8s-blueprint .kb-notes li{padding:6px 10px;border-left:3px solid;margin:6px 0;background:' + C.panel + ';border-radius:0 6px 6px 0}',
+    '#k8s-blueprint .kb-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px}',
+    '#k8s-blueprint .kb-tabs button,#k8s-blueprint .kb-copy{background:' + C.panel + ';color:' + C.dim + ';border:1px solid ' + C.line + ';border-radius:8px 8px 0 0;padding:7px 12px;font-size:.85rem;cursor:pointer}',
+    '#k8s-blueprint .kb-tabs button[aria-selected=true]{color:' + C.text + ';border-color:' + C.cp + ';border-bottom-color:' + C.panel + '}',
+    '#k8s-blueprint .kb-code{position:relative}',
+    '#k8s-blueprint .kb-code pre{margin:0;background:#06101d;color:#d5e3f5;border:1px solid ' + C.line + ';border-radius:0 8px 8px 8px;padding:14px;overflow:auto;max-height:420px;font-size:.8rem;line-height:1.5}',
+    '#k8s-blueprint .kb-copy{position:absolute;top:8px;right:8px;border-radius:6px;font-size:.75rem}'
+  ].join('\n');
+  var styleEl = document.createElement('style');
+  styleEl.textContent = css;
+  document.head.appendChild(styleEl);
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function opt(v, label, sel) {
+    return '<option value="' + v + '"' + (String(v) === String(sel) ? ' selected' : '') + '>' + label + '</option>';
+  }
+
+  root.innerHTML =
+    '<h3>K8s HA Topology Blueprint Generator</h3>' +
+    '<p class="kb-sub">Pick a topology, node counts and API endpoint. The diagram, quorum maths and kubeadm config update live.</p>' +
+    '<div class="kb-controls">' +
+      '<label>Topology<select data-k="topo">' + opt('stacked', 'Stacked etcd (on control plane)', 'external') + opt('external', 'External etcd cluster', 'external') + '</select></label>' +
+      '<label>Control-plane nodes<select data-k="cp">' + [1, 2, 3, 4, 5, 7].map(function (n) { return opt(n, n, 3); }).join('') + '</select></label>' +
+      '<label>etcd members<select data-k="etcd">' + [1, 2, 3, 4, 5, 7].map(function (n) { return opt(n, n, 3); }).join('') + '</select></label>' +
+      '<label>Workers: <output data-o="w">4</output><input data-k="w" type="range" min="1" max="24" value="4"></label>' +
+      '<label>API endpoint<select data-k="lb">' + opt('kubevip', 'kube-vip (ARP, static pod)', 'kubevip') + opt('keepalived', 'HAProxy + keepalived', 'kubevip') + opt('external', 'External load balancer', 'kubevip') + '</select></label>' +
+      '<label>Node subnet (/24 prefix)<input data-k="net" value="10.10.1"></label>' +
+    '</div>' +
+    '<div class="kb-stats" data-o="stats"></div>' +
+    '<div class="kb-svg" data-o="svg"></div>' +
+    '<ul class="kb-notes" data-o="notes"></ul>' +
+    '<div class="kb-tabs" role="tablist" data-o="tabs"></div>' +
+    '<div class="kb-code"><button class="kb-copy" type="button">Copy</button><pre><code data-o="code"></code></pre></div>';
+
+  function q(sel) { return root.querySelector(sel); }
+  var activeTab = 'kubeadm';
+
+  function read() {
+    var s = {};
+    root.querySelectorAll('[data-k]').forEach(function (el) { s[el.getAttribute('data-k')] = el.value; });
+    s.cp = +s.cp; s.etcd = +s.etcd; s.w = +s.w;
+    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(s.net)) s.net = '10.10.1';
+    if (s.topo === 'stacked') s.etcd = s.cp;
+    return s;
+  }
+
+  function plan(s) {
+    var ip = function (n) { return s.net + '.' + n; };
+    var p = { vip: ip(20), cps: [], etcds: [], workers: [] };
+    for (var i = 0; i < s.cp; i++) p.cps.push({ name: i === 0 ? 'manager' : 'manager-' + (i + 1), ip: ip(i === 0 ? 14 : 20 + i) });
+    if (s.topo === 'external') for (var e = 0; e < s.etcd; e++) p.etcds.push({ name: 'etcd-' + (e + 1), ip: ip([12, 13, 19, 33, 34, 35, 36][e]) });
+    else p.etcds = p.cps.map(function (c) { return { name: c.name, ip: c.ip }; });
+    for (var w = 0; w < s.w; w++) p.workers.push({ name: 'worker-' + String.fromCharCode(97 + (w % 26)) + (w >= 26 ? w : ''), ip: ip(100 + w) });
+    p.lbIp = s.lb === 'keepalived' ? ip(20) : s.lb === 'external' ? 'lb.corp.example' : ip(20);
+    return p;
+  }
+
+  function maths(s) {
+    var n = s.etcd, quorum = Math.floor(n / 2) + 1, tol = Math.floor((n - 1) / 2);
+    var cpTol = s.topo === 'stacked' ? Math.min(tol, s.cp - 1) : s.cp - 1;
+    return { quorum: quorum, etcdTol: tol, cpTol: Math.max(cpTol, 0), vms: s.cp + s.w + (s.topo === 'external' ? s.etcd : 0) + (s.lb === 'keepalived' ? 2 : 0) };
+  }
+
+  function notes(s, m) {
+    var out = [];
+    if (s.cp === 1) out.push(['bad', 'Single control plane: the API server is a single point of failure. A VIP still helps, because it lets you add managers later without re-pointing every kubelet.']);
+    if (s.etcd % 2 === 0) out.push(['warn', s.etcd + ' etcd members tolerate the same number of failures as ' + (s.etcd - 1) + ', yet add one more voter to every write. Use an odd count.']);
+    if (s.etcd > 5) out.push(['warn', s.etcd + ' etcd members add write latency (every write needs ' + m.quorum + ' acks). 5 is the practical ceiling for most clusters.']);
+    if (s.topo === 'stacked' && s.cp >= 3) out.push(['ok', 'Stacked etcd: fewer VMs, but losing a control-plane node also removes an etcd voter. Tolerates ' + m.etcdTol + ' node loss(es).']);
+    if (s.topo === 'external' && s.etcd >= 3) out.push(['ok', 'External etcd: control-plane and data-plane failures are decoupled. The API survives while 1 manager and ' + m.quorum + ' etcd members are up.']);
+    if (s.lb === 'kubevip') out.push(['ok', 'kube-vip in ARP mode: one leader holds the VIP via a Lease; failover is a gratuitous ARP away (measured ~1 s in the lab). All managers must share one L2 segment.']);
+    if (s.lb === 'keepalived') out.push(['ok', 'HAProxy + keepalived on 2 extra VMs: real health-checked TCP load balancing across all API servers, at the cost of two more machines to patch.']);
+    if (s.lb === 'external') out.push(['ok', 'External LB: point it at :6443 on every manager with a TCP health check on /livez, and put its DNS name in certSANs.']);
+    if (s.w < 2) out.push(['warn', 'One worker: any workload with replicas > 1 and anti-affinity cannot schedule. Plan for at least 2-3.']);
+    return out;
+  }
+
+  var X = function (v) { return Math.round(v); };
+  function nodeBox(x, y, w, h, color, title, sub, badge) {
+    var s = '<g><rect x="' + X(x) + '" y="' + y + '" width="' + X(w) + '" height="' + h + '" rx="7" fill="' + C.bg + '" stroke="' + color + '" stroke-width="1.6"/>' +
+      '<text x="' + X(x + w / 2) + '" y="' + (y + 19) + '" fill="' + C.text + '" font-size="12" font-weight="600" text-anchor="middle">' + esc(title) + '</text>' +
+      '<text x="' + X(x + w / 2) + '" y="' + (y + 34) + '" fill="' + C.dim + '" font-size="10.5" text-anchor="middle" font-family="ui-monospace,monospace">' + esc(sub) + '</text>';
+    if (badge) s += '<rect x="' + X(x + w / 2 - 22) + '" y="' + (y + h - 17) + '" width="44" height="12" rx="6" fill="' + C.etcd + '"/><text x="' + X(x + w / 2) + '" y="' + (y + h - 8) + '" fill="#1a1205" font-size="8.5" font-weight="700" text-anchor="middle">etcd</text>';
+    return s + '</g>';
+  }
+  function row(items, y, W, maxShow, boxW) {
+    var shown = items.slice(0, maxShow), extra = items.length - shown.length;
+    var n = shown.length + (extra > 0 ? 1 : 0), gap = 12;
+    var bw = Math.min(boxW, (W - 40 - gap * (n - 1)) / n), total = n * bw + (n - 1) * gap, x0 = (W - total) / 2;
+    return { shown: shown, extra: extra, bw: bw, xs: shown.map(function (_, i) { return x0 + i * (bw + gap); }), xExtra: x0 + shown.length * (bw + gap), y: y };
+  }
+  function link(x1, y1, x2, y2, color, dash) {
+    return '<path d="M' + X(x1) + ' ' + y1 + ' C' + X(x1) + ' ' + ((y1 + y2) / 2) + ' ' + X(x2) + ' ' + ((y1 + y2) / 2) + ' ' + X(x2) + ' ' + y2 + '" stroke="' + color + '" stroke-width="1.2" fill="none" opacity=".55"' + (dash ? ' stroke-dasharray="4 4"' : '') + '/>';
+  }
+  function label(x, y, t) { return '<text x="' + x + '" y="' + y + '" fill="' + C.dim + '" font-size="10" letter-spacing="1.5">' + t + '</text>'; }
+
+  function svg(s, p) {
+    var W = 880, ext = s.topo === 'external';
+    var yLb = 30, yCp = 120, yEtcd = 230, yW = ext ? 330 : 250, H = yW + 80;
+    var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cluster topology diagram">';
+    out += '<defs><pattern id="kbg" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="' + C.grid + '" stroke-width=".6"/></pattern></defs>';
+    out += '<rect width="' + W + '" height="' + H + '" fill="url(#kbg)"/>';
+
+    var lbName = s.lb === 'kubevip' ? 'kube-vip VIP' : s.lb === 'keepalived' ? 'HAProxy + keepalived' : 'External LB';
+    var lbW = 220, lbX = (W - lbW) / 2;
+    var cpRow = row(p.cps, yCp, W, 7, 140);
+    var wRow = row(p.workers, yW, W, 9, 110);
+    var eRow = ext ? row(p.etcds, yEtcd, W, 7, 130) : null;
+
+    cpRow.xs.forEach(function (x) { out += link(W / 2, yLb + 46, x + cpRow.bw / 2, yCp, C.lb); });
+    wRow.xs.forEach(function (x) { out += link(x + wRow.bw / 2, yW, W / 2, yLb + 46, C.worker, true); });
+    if (ext) cpRow.xs.forEach(function (cx) { eRow.xs.forEach(function (ex) { out += link(cx + cpRow.bw / 2, yCp + 50, ex + eRow.bw / 2, yEtcd, C.etcd); }); });
+
+    out += label(16, yLb + 8, 'API ENDPOINT :6443');
+    out += nodeBox(lbX, yLb, lbW, 46, C.lb, lbName, s.lb === 'external' ? p.lbIp + ':6443' : p.vip + ':6443');
+    out += label(16, yCp - 8, 'CONTROL PLANE');
+    cpRow.xs.forEach(function (x, i) { out += nodeBox(x, yCp, cpRow.bw, ext ? 50 : 60, C.cp, cpRow.shown[i].name, cpRow.shown[i].ip, !ext); });
+    if (ext) {
+      out += label(16, yEtcd - 8, 'ETCD (' + s.etcd + ' MEMBERS, QUORUM ' + (Math.floor(s.etcd / 2) + 1) + ')');
+      eRow.xs.forEach(function (x, i) { out += nodeBox(x, yEtcd, eRow.bw, 44, C.etcd, eRow.shown[i].name, eRow.shown[i].ip + ':2379'); });
+    }
+    out += label(16, yW - 8, 'WORKERS (' + s.w + ')');
+    wRow.xs.forEach(function (x, i) { out += nodeBox(x, yW, wRow.bw, 44, C.worker, wRow.shown[i].name, wRow.shown[i].ip); });
+    if (wRow.extra > 0) out += nodeBox(wRow.xExtra, yW, wRow.bw, 44, C.dim, '+' + wRow.extra + ' more', 'workers');
+    return out + '</svg>';
+  }
+
+  function kubeadmCfg(s, p) {
+    var ep = s.lb === 'external' ? p.lbIp : p.vip;
+    var sans = [ep].concat(p.cps.map(function (c) { return c.ip; }), p.cps.map(function (c) { return c.name; }));
+    var y = [
+      '# kubeadm-config.yaml  (kubeadm init --config kubeadm-config.yaml --upload-certs)',
+      'apiVersion: kubeadm.k8s.io/v1beta4',
+      'kind: InitConfiguration',
+      'localAPIEndpoint:',
+      '  advertiseAddress: ' + p.cps[0].ip,
+      '  bindPort: 6443',
+      'nodeRegistration:',
+      '  name: ' + p.cps[0].name,
+      '  criSocket: unix:///var/run/crio/crio.sock',
+      '---',
+      'apiVersion: kubeadm.k8s.io/v1beta4',
+      'kind: ClusterConfiguration',
+      'kubernetesVersion: v1.32.13',
+      'controlPlaneEndpoint: ' + ep + ':6443',
+      'apiServer:',
+      '  certSANs:'
+    ].concat(sans.map(function (x) { return '  - ' + x; }));
+    if (s.topo === 'external') {
+      y = y.concat(['etcd:', '  external:', '    endpoints:'], p.etcds.map(function (e) { return '    - https://' + e.ip + ':2379'; }),
+        ['    caFile: /etc/kubernetes/pki/etcd/ca.crt', '    certFile: /etc/kubernetes/pki/apiserver-etcd-client.crt', '    keyFile: /etc/kubernetes/pki/apiserver-etcd-client.key']);
+    } else {
+      y = y.concat(['etcd:', '  local:', '    dataDir: /var/lib/etcd', '    # stacked: one etcd member per control-plane node (' + s.cp + ' total)']);
+    }
+    y = y.concat(['networking:', '  podSubnet: 192.168.0.0/16   # Calico default', '  serviceSubnet: 10.96.0.0/12']);
+    return y.join('\n');
+  }
+
+  function endpointCfg(s, p) {
+    if (s.lb === 'kubevip') {
+      return [
+        '# /etc/kubernetes/manifests/kube-vip.yaml  (one per manager; only vip_interface may differ)',
+        '# generate: kube-vip manifest pod --interface ens34 --address ' + p.vip + ' --controlplane --arp --leaderElection',
+        'env:',
+        '- {name: vip_arp,             value: "true"}',
+        '- {name: port,                value: "6443"}',
+        '- {name: vip_interface,       value: ens34}',
+        '- {name: vip_subnet,          value: "32"}',
+        '- {name: cp_enable,           value: "true"}',
+        '- {name: vip_leaderelection,  value: "true"}',
+        '- {name: vip_leasename,       value: plndr-cp-lock}',
+        '- {name: vip_leaseduration,   value: "15"}',
+        '- {name: vip_renewdeadline,   value: "10"}',
+        '- {name: vip_retryperiod,     value: "2"}',
+        '- {name: address,             value: ' + p.vip + '}',
+        'image: ghcr.io/kube-vip/kube-vip:v1.2.4',
+        'securityContext: {capabilities: {add: [NET_ADMIN, NET_RAW], drop: [ALL]}}',
+        'hostNetwork: true'
+      ].join('\n');
+    }
+    if (s.lb === 'keepalived') {
+      return ['# /etc/haproxy/haproxy.cfg  (on both LB VMs; keepalived floats ' + p.vip + ')',
+        'frontend k8s-api',
+        '    bind ' + p.vip + ':6443',
+        '    mode tcp',
+        '    option tcplog',
+        '    default_backend k8s-api',
+        '',
+        'backend k8s-api',
+        '    mode tcp',
+        '    balance roundrobin',
+        '    option httpchk GET /livez',
+        '    http-check expect status 200',
+        '    default-server check check-ssl verify none inter 3s fall 3 rise 2'
+      ].concat(p.cps.map(function (c) { return '    server ' + c.name + ' ' + c.ip + ':6443'; })).join('\n');
+    }
+    return ['# External load balancer target group', '# listener: TCP 6443  ->  targets:'].concat(p.cps.map(function (c) { return '#   ' + c.ip + ':6443  (' + c.name + ')'; }),
+      ['# health check: HTTPS GET /livez  every 5s, unhealthy after 3', '# add the LB DNS name to apiServer.certSANs before kubeadm init']).join('\n');
+  }
+
+  function joinCmds(s, p) {
+    var ep = s.lb === 'external' ? p.lbIp : p.vip;
+    var out = ['# on ' + p.cps[0].name + ' after kubeadm init --upload-certs:', 'kubeadm token create --print-join-command', 'kubeadm init phase upload-certs --upload-certs   # prints <cert-key>, valid 2h', ''];
+    p.cps.slice(1).forEach(function (c) {
+      out.push('# ' + c.name);
+      out.push('kubeadm join ' + ep + ':6443 --token <token> \\');
+      out.push('  --discovery-token-ca-cert-hash sha256:<hash> \\');
+      out.push('  --control-plane --certificate-key <cert-key> \\');
+      out.push('  --apiserver-advertise-address ' + c.ip);
+      out.push('');
+    });
+    out.push('# every worker');
+    out.push('kubeadm join ' + ep + ':6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>');
+    return out.join('\n');
+  }
+
+  function ports(s) {
+    var l = ['# ufw rules (default deny incoming), mirroring 02-ha-control-plane/base-setup.sh', 'LAN=' + read().net + '.0/24'];
+    l.push('for p in 6443 10250 10257 10259; do ufw allow from "$LAN" to any port "$p" proto tcp; done   # control plane');
+    if (s.topo === 'stacked') l.push('ufw allow from "$LAN" to any port 2379:2380 proto tcp   # stacked etcd client + peer');
+    else l.push('# on etcd hosts: ufw allow from "$LAN" to any port 2379:2380 proto tcp');
+    l.push('ufw allow from "$LAN" to any port 179  proto tcp   # calico bgp');
+    l.push('ufw allow from "$LAN" to any port 5473 proto tcp   # calico typha');
+    l.push('ufw allow from "$LAN" to any port 4789 proto udp   # calico vxlan');
+    l.push('# workers: 10250/tcp from LAN, 30000:32767/tcp for NodePorts');
+    if (s.lb === 'kubevip') l.push('ufw allow from "$LAN" to any port 2112 proto tcp   # kube-vip prometheus (optional)');
+    return l.join('\n');
+  }
+
+  var TABS = [['kubeadm', 'kubeadm-config.yaml'], ['endpoint', 'API endpoint'], ['join', 'Join commands'], ['ports', 'Firewall']];
+
+  function render() {
+    var s = read(), p = plan(s), m = maths(s);
+    var etcdSel = q('[data-k=etcd]');
+    etcdSel.disabled = s.topo === 'stacked';
+    if (s.topo === 'stacked') etcdSel.value = String(s.cp);
+    q('[data-o=w]').textContent = s.w;
+    q('[data-o=stats]').innerHTML = [
+      [m.quorum + ' / ' + s.etcd, 'etcd quorum'],
+      [m.etcdTol, 'etcd failures tolerated'],
+      [m.cpTol, 'manager failures tolerated'],
+      [m.vms, 'VMs to provision']
+    ].map(function (r) { return '<div class="kb-stat"><b style="color:' + (r[1].indexOf('tolerated') > -1 && r[0] === 0 ? C.bad : C.text) + '">' + r[0] + '</b><span>' + r[1] + '</span></div>'; }).join('');
+    q('[data-o=svg]').innerHTML = svg(s, p);
+    var col = { ok: C.ok, warn: C.warn, bad: C.bad };
+    q('[data-o=notes]').innerHTML = notes(s, m).map(function (n) { return '<li style="border-color:' + col[n[0]] + '">' + esc(n[1]) + '</li>'; }).join('');
+    q('[data-o=tabs]').innerHTML = TABS.map(function (t) { return '<button type="button" role="tab" data-tab="' + t[0] + '" aria-selected="' + (t[0] === activeTab) + '">' + t[1] + '</button>'; }).join('');
+    var code = activeTab === 'kubeadm' ? kubeadmCfg(s, p) : activeTab === 'endpoint' ? endpointCfg(s, p) : activeTab === 'join' ? joinCmds(s, p) : ports(s);
+    q('[data-o=code]').textContent = code;
+  }
+
+  root.addEventListener('input', render);
+  root.addEventListener('change', render);
+  root.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-tab]');
+    if (t) { activeTab = t.getAttribute('data-tab'); render(); return; }
+    if (e.target.classList.contains('kb-copy')) {
+      var txt = q('[data-o=code]').textContent, b = e.target;
+      var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1400); };
+      if (navigator.clipboard) navigator.clipboard.writeText(txt).then(done, function () {});
+    }
+  });
+  render();
+})();
+`;
+
+The control plane is the nervous system of your Kubernetes ecosystem. In a production cluster, achieving true High Availability (HA) demands eliminating every single single point of failure (SPOF). This masterclass deconstructs the architecture required to scale control plane structures, manage redundant database states, and handle traffic load balancing.
+
+## 1. Control Plane Architecture Selection
+
+When engineering a highly available Kubernetes management layer, you must choose between two distinct structural designs for your backing storage (`etcd`):
+
+### Stacked Control Plane Nodes
+In this topology, each node running control plane services (the API server, controller manager, and scheduler) also runs a local co-located `etcd` pod. 
+- **The Advantages:** Simple to spin up, requires fewer individual servers, and scales linearly.
+- **The Tradeoff:** If a node experiences an infrastructure drop, you lose both a control plane api worker and a member of your consensus cluster simultaneously.
+
+### External Dedicated etcd Clusters
+This decoupled strategy extracts the database layer entirely, hosting `etcd` members on independent hardware nodes.
+- **The Advantages:** Complete isolation of concerns. Heavy compute spikes on API workloads will not throttle state store operations.
+- **The Tradeoff:** Requires double the machine footprint and demands meticulous certificate routing management.
+
+---
+
+## 2. Interactive Topology Blueprint Generator
+
+Use the autonomous generator widget below to visually configure your target cluster footprint. It will map out your resource allocations and output copy-paste ready environment parameters cleanly:
+
+<div id="k8s-blueprint" style="min-height:420px">
+  <noscript>The topology blueprint generator needs JavaScript enabled.</noscript>
+</div>
+<script set:html={haTopologyScript} />
+
+---
+
+## 3. High Availability Load Balancing Configuration
+
+The API servers sitting across your control nodes must sit behind an enterprise-grade TCP load balancer. Below is a production-hardened `haproxy.cfg` blueprint designed to handle traffic parsing with health checks:
+
+```haproxy
+global
+    log /dev/log local0
+    group haproxy
+    daemon
+
+defaults
+    log     global
+    mode    http
+    timeout connect 10s
+    timeout client  60s
+    timeout server  60s
+
+frontend k8s_api_frontend
+    bind *:6443
+    mode tcp
+    option tcplog
+    default_backend k8s_api_backends
+
+backend k8s_api_backends
+    mode tcp
+    option tcp-check
+    balance roundrobin
+    default-server inter 10s downinter 5s rise 2 fall 3 slowstart 60s maxconn 250 maxqueue 256 weight 100
+    server cp-node-01 10.0.10.11:6443 check
+    server cp-node-02 10.0.10.12:6443 check
+    server cp-node-03 10.0.10.13:6443 check
+```
+
+## 4. Resource Guide & Next-Stage Infrastructure Paths
+
+Mastering structural high availability clusters is a baseline requirement for high-level administration tracks. If you are preparing for advanced operational checkpoints like the Certified Kubernetes Security Specialist (CKS) or expanding infrastructure blueprints, structuring interactive test beds is crucial.
+
+> ### 📘 Advanced Systems Preparation
+> To refine your hands-on mastery over cluster break/fix cycles, high-availability upgrades, and live multi-master diagnostic tracking under time-boxed restrictions, check out the interactive lab playgrounds on [KodeKloud CKS Platform](https://kodekloud.com).
